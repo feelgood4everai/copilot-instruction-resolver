@@ -1,39 +1,26 @@
 {
   "name": "copilot-instruction-resolver",
   "displayName": "Copilot Instruction Resolver",
-  "description": "Solves Copilot's limitation of only looking for copilot-instructions.md in the workspace root by walking up parent directories and merging instructions",
-  "version": "1.0.0",
+  "description": "Walks up parent directories to find and merge copilot-instructions.md files for monorepo support",
+  "version": "0.1.0",
   "publisher": "feelgood4everai",
   "engines": {
-    "vscode": "^1.74.0"
+    "vscode": "^1.85.0"
   },
   "categories": [
+    "Other",
     "Machine Learning",
-    "Programming Languages",
-    "Other"
+    "Programming Languages"
   ],
   "keywords": [
     "copilot",
-    "github",
     "instructions",
     "monorepo",
-    "ai",
-    "code generation"
+    "github",
+    "ai"
   ],
-  "icon": "icon.png",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/feelgood4everai/copilot-instruction-resolver"
-  },
-  "bugs": {
-    "url": "https://github.com/feelgood4everai/copilot-instruction-resolver/issues"
-  },
-  "homepage": "https://github.com/feelgood4everai/copilot-instruction-resolver#readme",
-  "license": "MIT",
   "activationEvents": [
-    "onLanguage:*",
-    "workspaceContains:**/copilot-instructions.md",
-    "onView:copilotInstructions"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -42,35 +29,15 @@
         {
           "id": "copilotInstructions",
           "name": "Copilot Instructions",
-          "when": "workspaceHasCopilotInstructions"
+          "when": "workspaceFolderCount > 0"
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "copilotInstructions",
-        "contents": "No Copilot instruction files found in this workspace.\n[Learn about Copilot Instructions](https://docs.github.com/en/copilot/using-github-copilot/copilot-chat/creating-a-copilot-instructions-file)"
-      }
-    ],
     "commands": [
       {
         "command": "copilotInstructionResolver.refresh",
-        "title": "Refresh Copilot Instructions",
+        "title": "Refresh Instructions",
         "icon": "$(refresh)"
-      },
-      {
-        "command": "copilotInstructionResolver.openInstructionFile",
-        "title": "Open Instruction File",
-        "icon": "$(file-code)"
-      },
-      {
-        "command": "copilotInstructionResolver.showActiveInstructions",
-        "title": "Show Active Instructions for Current File",
-        "icon": "$(info)"
-      },
-      {
-        "command": "copilotInstructionResolver.revealInTree",
-        "title": "Reveal in Copilot Instructions Tree"
       },
       {
         "command": "copilotInstructionResolver.showHierarchy",
@@ -78,9 +45,8 @@
         "icon": "$(list-tree)"
       },
       {
-        "command": "copilotInstructionResolver.generateMergedInstructions",
-        "title": "Generate Merged Instructions for Current File",
-        "icon": "$(combine)"
+        "command": "copilotInstructionResolver.openFile",
+        "title": "Open Instruction File"
       }
     ],
     "menus": {
@@ -88,32 +54,12 @@
         {
           "command": "copilotInstructionResolver.refresh",
           "when": "view == copilotInstructions",
-          "group": "navigation@1"
+          "group": "navigation"
         },
         {
           "command": "copilotInstructionResolver.showHierarchy",
           "when": "view == copilotInstructions",
-          "group": "navigation@2"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "copilotInstructionResolver.openInstructionFile",
-          "when": "view == copilotInstructions && viewItem == instructionFile",
-          "group": "inline@1"
-        }
-      ],
-      "commandPalette": [
-        {
-          "command": "copilotInstructionResolver.showActiveInstructions",
-          "when": "workspaceHasCopilotInstructions"
-        }
-      ],
-      "editor/context": [
-        {
-          "command": "copilotInstructionResolver.showActiveInstructions",
-          "when": "workspaceHasCopilotInstructions",
-          "group": "9_cutcopypaste@5"
+          "group": "navigation"
         }
       ]
     },
@@ -123,45 +69,16 @@
         "copilotInstructionResolver.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Enable the Copilot Instruction Resolver extension"
-        },
-        "copilotInstructionResolver.maxParentLevels": {
-          "type": "number",
-          "default": 10,
-          "description": "Maximum number of parent directory levels to traverse when looking for instruction files"
+          "description": "Enable automatic instruction resolution"
         },
         "copilotInstructionResolver.mergeStrategy": {
           "type": "string",
           "enum": [
             "concatenate",
-            "hierarchical"
+            "override"
           ],
-          "default": "hierarchical",
-          "description": "Strategy for merging instructions: concatenate (simple merge) or hierarchical (with comments indicating source)"
-        },
-        "copilotInstructionResolver.showInStatusBar": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show active instruction count in the status bar"
-        },
-        "copilotInstructionResolver.instructionFileNames": {
-          "type": "array",
-          "default": [
-            "copilot-instructions.md",
-            ".github/copilot-instructions.md"
-          ],
-          "items": {
-            "type": "string"
-          },
-          "description": "Names of files to look for as Copilot instruction files (relative to workspace or .github folder)"
-        },
-        "copilotInstructionResolver.workspaceOverrides": {
-          "type": [
-            "object",
-            "null"
-          ],
-          "default": null,
-          "description": "Workspace-specific instruction overrides (key: workspace path, value: instruction content or file path)"
+          "default": "concatenate",
+          "description": "How to merge multiple instruction files"
         }
       }
     }
@@ -169,21 +86,13 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p .//",
+    "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js",
-    "package": "vsce package",
-    "publish": "vsce publish"
+    "lint": "eslint src --ext ts"
   },
   "devDependencies": {
-    "@types/vscode": "^1.74.0",
-    "@types/node": "16.x",
-    "@typescript-eslint/eslint-plugin": "^5.45.0",
-    "@typescript-eslint/parser": "^5.45.0",
-    "eslint": "^8.28.0",
-    "typescript": "^4.9.4",
-    "@vscode/test-electron": "^2.2.0",
-    "@vscode/vsce": "^2.15.0"
+    "@types/vscode": "^1.85.0",
+    "@types/node": "20.x",
+    "typescript": "^5.3.0"
   }
 }

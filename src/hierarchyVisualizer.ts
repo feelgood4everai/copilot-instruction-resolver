@@ -1,394 +1,236 @@
-/**
- * Hierarchy Visualizer - Shows instruction inheritance and relationships
- * 
- * This module provides visualization of how instructions are inherited
- * and merged across the directory hierarchy.
- */
-
+// Visualizes the instruction inheritance hierarchy
 import * as vscode from 'vscode';
-import * as path from 'path';
-import { InstructionHierarchy, InstructionFile } from './instructionResolver';
+import { InstructionResolver } from './instructionResolver';
 
-/**
- * Represents a node in the instruction hierarchy visualization
- */
-export interface HierarchyNode {
-  /** Display name for the node */
-  label: string;
-  /** Description of the node's role */
-  description: string;
-  /** Full path or identifier */
-  path: string;
-  /** Children nodes */
-  children: HierarchyNode[];
-  /** Whether this node has instructions */
-  hasInstructions: boolean;
-  /** Content preview (if available) */
-  contentPreview?: string;
-  /** Level in the hierarchy */
-  level: number;
-}
-
-/**
- * Visualizes instruction hierarchies and inheritance relationships
- */
 export class HierarchyVisualizer {
-  /**
-   * Generate a hierarchy node structure for a given instruction hierarchy
-   */
-  public static generateHierarchyTree(hierarchy: InstructionHierarchy): HierarchyNode {
-    const root: HierarchyNode = {
-      label: 'Root',
-      description: 'Base instructions',
-      path: '',
-      children: [],
-      hasInstructions: false,
-      level: 0
-    };
+    private panel: vscode.WebviewPanel | undefined;
 
-    // Build tree from the hierarchy files
-    let currentNode = root;
-    const files = [...hierarchy.files].reverse(); // Start from root
+    async show(resolver: InstructionResolver): Promise<void> {
+        const instructions = await resolver.findAllInstructions();
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const node: HierarchyNode = {
-        label: path.basename(file.directory) || 'Workspace Root',
-        description: file.relativePath,
-        path: file.path,
-        children: [],
-        hasInstructions: true,
-        contentPreview: this.generateContentPreview(file.content),
-        level: files.length - 1 - i
-      };
+        if (this.panel) {
+            this.panel.reveal();
+        } else {
+            this.panel = vscode.window.createWebviewPanel(
+                'copilotInstructionHierarchy',
+                'Copilot Instruction Hierarchy',
+                vscode.ViewColumn.One,
+                { enableScripts: true }
+            );
 
-      currentNode.children.push(node);
-      currentNode = node;
+            this.panel.onDidDispose(() => {
+                this.panel = undefined;
+            });
+        }
+
+        this.panel.webview.html = this.getHtmlContent(instructions);
     }
 
-    return root;
-  }
+    private getHtmlContent(instructions: { path: string; relativePath: string; depth: number }[]): string {
+        if (instructions.length === 0) {
+            return this.getEmptyHtml();
+        }
 
-  /**
-   * Generate a text-based tree representation
-   */
-  public static generateTextTree(hierarchy: InstructionHierarchy): string {
-    const lines: string[] = [];
-    lines.push('# Copilot Instruction Hierarchy');
-    lines.push('');
-    lines.push(`Target file: \`${hierarchy.targetFile}\``);
-    lines.push('');
-    lines.push('## Inheritance Chain (closest to root)');
-    lines.push('');
+        const hierarchyItems = instructions.map((inst, index) => {
+            const isRoot = index === 0;
+            const isActive = index === instructions.length - 1;
+            const indent = index * 30;
+            
+            return `
+                <div class="hierarchy-item" style="margin-left: ${indent}px;">
+                    <div class="connector ${isRoot ? 'root' : ''}"></div>
+                    <div class="node ${isRoot ? 'root-node' : ''} ${isActive ? 'active-node' : ''}">
+                        <div class="level">${isRoot ? 'ROOT' : isActive ? 'ACTIVE' : `Level +${index}`}</div>
+                        <div class="path">${this.escapeHtml(inst.path)}</div>
+                        <div class="relative">${this.escapeHtml(inst.relativePath)}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
 
-    const files = hierarchy.files;
-    
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const indent = '  '.repeat(i);
-      const prefix = i === files.length - 1 ? '└── ' : '├── ';
-      const marker = i === 0 ? ' 🎯' : i === files.length - 1 ? ' 🏠' : '';
-      
-      lines.push(`${indent}${prefix}${file.relativePath}${marker}`);
-      lines.push(`${indent}    Level ${file.level} • ${this.countLines(file.content)} lines`);
-    }
-
-    lines.push('');
-    lines.push('## Merged Instructions Preview');
-    lines.push('');
-    lines.push('```markdown');
-    lines.push(hierarchy.mergedContent.substring(0, 500));
-    if (hierarchy.mergedContent.length > 500) {
-      lines.push('...');
-      lines.push(`(total: ${this.countLines(hierarchy.mergedContent)} lines)`);
-    }
-    lines.push('```');
-
-    if (hierarchy.overridesApplied) {
-      lines.push('');
-      lines.push('⚠️ **Workspace overrides have been applied to these instructions**');
-    }
-
-    return lines.join('\n');
-  }
-
-  /**
-   * Generate an HTML visualization for webview
-   */
-  public static generateHtmlVisualization(hierarchy: InstructionHierarchy): string {
-    const files = hierarchy.files;
-    
-    let nodesHtml = '';
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const isFirst = i === 0;
-      const isLast = i === files.length - 1;
-      
-      nodesHtml += `
-        <div class="node ${isFirst ? 'target' : ''} ${isLast ? 'root' : ''}" 
-             style="--level: ${file.level}">
-          <div class="node-header">
-            <span class="node-badge" title="${isFirst ? 'Closest to target' : isLast ? 'Root level' : 'Intermediate'}">
-              ${isFirst ? '🎯' : isLast ? '🏠' : '⏵'}
-            </span>
-            <span class="node-path" title="${file.path}">${file.relativePath}</span>
-          </div>
-          <div class="node-meta">
-            <span>Level ${file.level}</span>
-            <span>${this.countLines(file.content)} lines</span>
-            <span>Modified: ${file.lastModified.toLocaleDateString()}</span>
-          </div>
-          <div class="node-preview" title="Click to expand">
-            <pre>${this.escapeHtml(this.generateContentPreview(file.content))}</pre>
-          </div>
-        </div>
-      `;
-    }
-
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-          :root {
-            --bg-primary: var(--vscode-editor-background);
-            --bg-secondary: var(--vscode-editorWidget-background);
-            --fg-primary: var(--vscode-foreground);
-            --accent: var(--vscode-focusBorder);
-            --border: var(--vscode-panel-border);
-            --success: #4ec9b0;
-            --warning: #cca700;
-          }
-          
-          * {
-            box-sizing: border-box;
-          }
-          
-          body {
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Copilot Instruction Hierarchy</title>
+    <style>
+        body {
             font-family: var(--vscode-font-family);
-            font-size: var(--vscode-font-size);
-            background: var(--bg-primary);
-            color: var(--fg-primary);
+            color: var(--vscode-foreground);
+            background: var(--vscode-editor-background);
             padding: 20px;
-            margin: 0;
-          }
-          
-          h1 {
-            margin: 0 0 10px 0;
-            font-size: 1.5em;
-          }
-          
-          .target-file {
-            color: var(--vscode-textPreformat-foreground);
-            margin-bottom: 20px;
-            padding: 10px;
-            background: var(--bg-secondary);
+        }
+        h1 {
+            color: var(--vscode-titleBar-activeForeground);
+            border-bottom: 1px solid var(--vscode-panel-border);
+            padding-bottom: 10px;
+        }
+        .info-box {
+            background: var(--vscode-inputValidation-infoBackground);
+            border: 1px solid var(--vscode-inputValidation-infoBorder);
+            padding: 15px;
             border-radius: 4px;
-          }
-          
-          .hierarchy {
+            margin-bottom: 20px;
+        }
+        .hierarchy {
             display: flex;
             flex-direction: column;
-            gap: 16px;
-          }
-          
-          .node {
-            background: var(--bg-secondary);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 12px;
-            margin-left: calc(var(--level) * 20px);
-            transition: all 0.2s;
-          }
-          
-          .node:hover {
-            border-color: var(--accent);
-          }
-          
-          .node.target {
-            border-color: var(--success);
-            border-width: 2px;
-          }
-          
-          .node.root {
-            border-color: var(--accent);
-          }
-          
-          .node-header {
+            gap: 0;
+        }
+        .hierarchy-item {
             display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 8px;
-          }
-          
-          .node-badge {
-            font-size: 1.2em;
-          }
-          
-          .node-path {
+            align-items: flex-start;
+            position: relative;
+        }
+        .connector {
+            width: 20px;
+            height: 60px;
+            border-left: 2px solid var(--vscode-panel-border);
+            border-bottom: 2px solid var(--vscode-panel-border);
+            margin-right: 10px;
+            margin-top: -20px;
+        }
+        .connector.root {
+            border-left: none;
+            border-bottom: none;
+            width: 0;
+        }
+        .node {
+            background: var(--vscode-editor-inactiveSelectionBackground);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 6px;
+            padding: 12px 16px;
+            margin-bottom: 10px;
+            min-width: 300px;
+        }
+        .node.root-node {
+            border-color: var(--vscode-charts-blue);
+            background: rgba(0, 122, 204, 0.1);
+        }
+        .node.active-node {
+            border-color: var(--vscode-charts-green);
+            background: rgba(0, 168, 0, 0.1);
+        }
+        .level {
+            font-size: 11px;
             font-weight: bold;
-            font-family: var(--vscode-editor-font-family);
-          }
-          
-          .node-meta {
-            display: flex;
-            gap: 16px;
-            font-size: 0.85em;
             color: var(--vscode-descriptionForeground);
-            margin-bottom: 8px;
-          }
-          
-          .node-preview {
-            background: var(--bg-primary);
-            border-radius: 4px;
-            padding: 8px;
-            cursor: pointer;
-          }
-          
-          .node-preview pre {
-            margin: 0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .path {
             font-family: var(--vscode-editor-font-family);
-            font-size: 0.85em;
-            white-space: pre-wrap;
-            word-break: break-word;
-            max-height: 100px;
-            overflow: hidden;
-          }
-          
-          .node-preview.expanded pre {
-            max-height: none;
-          }
-          
-          .legend {
+            font-size: 12px;
+            color: var(--vscode-foreground);
+            margin-top: 4px;
+        }
+        .relative {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            margin-top: 2px;
+        }
+        .legend {
             margin-top: 20px;
             padding: 10px;
-            background: var(--bg-secondary);
+            background: var(--vscode-editor-inactiveSelectionBackground);
             border-radius: 4px;
-            font-size: 0.9em;
-          }
-          
-          .legend-item {
+        }
+        .legend-item {
             display: flex;
             align-items: center;
             gap: 8px;
-            margin: 4px 0;
-          }
-          
-          .info-box {
-            margin-top: 20px;
-            padding: 12px;
-            background: var(--bg-secondary);
-            border-left: 4px solid var(--warning);
-            border-radius: 4px;
-          }
-        </style>
-      </head>
-      <body>
-        <h1>🔗 Copilot Instruction Hierarchy</h1>
-        <div class="target-file">
-          <strong>Target:</strong> ${path.basename(hierarchy.targetFile)}
-        </div>
-        
-        <div class="hierarchy">
-          ${nodesHtml}
-        </div>
-        
-        <div class="legend">
-          <strong>Legend:</strong>
-          <div class="legend-item"><span>🎯</span> Closest instructions to target file</div>
-          <div class="legend-item"><span>⏵</span> Intermediate level instructions</div>
-          <div class="legend-item"><span>🏠</span> Root/workspace level instructions</div>
-        </div>
-
-        ${hierarchy.overridesApplied ? `
-        <div class="info-box">
-          ⚠️ <strong>Workspace overrides applied:</strong> Some instructions have been overridden via workspace settings.
-        </div>
-        ` : ''}
-        
-        <script>
-          document.querySelectorAll('.node-preview').forEach(el => {
-            el.addEventListener('click', () => {
-              el.classList.toggle('expanded');
-            });
-          });
-        </script>
-      </body>
-      </html>
-    `;
-  }
-
-  /**
-   * Generate a content preview (first few lines)
-   */
-  private static generateContentPreview(content: string, maxLines: number = 5): string {
-    const lines = content.split('\n').filter(line => line.trim());
-    const preview = lines.slice(0, maxLines).join('\n');
+            margin: 5px 0;
+            font-size: 12px;
+        }
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+        .legend-root { background: rgba(0, 122, 204, 0.5); }
+        .legend-inherited { background: var(--vscode-editor-inactiveSelectionBackground); }
+        .legend-active { background: rgba(0, 168, 0, 0.5); }
+    </style>
+</head>
+<body>
+    <h1>📋 Copilot Instruction Hierarchy</h1>
     
-    if (lines.length > maxLines) {
-      return preview + '\n...';
+    <div class="info-box">
+        <strong>How it works:</strong> Copilot Instruction Resolver walks up the directory tree 
+        from your workspace root to find all <code>copilot-instructions.md</code> files. 
+        Instructions are merged from root (base) down to your workspace (most specific).
+    </div>
+
+    <div class="hierarchy">
+        ${hierarchyItems}
+    </div>
+
+    <div class="legend">
+        <strong>Legend:</strong>
+        <div class="legend-item">
+            <div class="legend-color legend-root"></div>
+            <span>Root - Base instructions (highest in tree)</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color legend-inherited"></div>
+            <span>Inherited - Intermediate instruction files</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color legend-active"></div>
+            <span>Active - Your workspace instructions (deepest/most specific)</span>
+        </div>
+    </div>
+</body>
+</html>`;
     }
-    return preview;
-  }
 
-  /**
-   * Count lines in content
-   */
-  private static countLines(content: string): number {
-    return content.split('\n').length;
-  }
+    private getEmptyHtml(): string {
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Copilot Instruction Hierarchy</title>
+    <style>
+        body {
+            font-family: var(--vscode-font-family);
+            color: var(--vscode-foreground);
+            background: var(--vscode-editor-background);
+            padding: 20px;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+        }
+        .empty-icon {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+        h2 {
+            color: var(--vscode-titleBar-activeForeground);
+        }
+        p {
+            color: var(--vscode-descriptionForeground);
+        }
+    </style>
+</head>
+<body>
+    <div class="empty-state">
+        <div class="empty-icon">📭</div>
+        <h2>No Instructions Found</h2>
+        <p>No <code>copilot-instructions.md</code> files were found in your workspace or parent directories.</p>
+        <p>Create one at your workspace root to get started!</p>
+    </div>
+</body>
+</html>`;
+    }
 
-  /**
-   * Escape HTML special characters
-   */
-  private static escapeHtml(text: string): string {
-    return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
-
-  /**
-   * Show hierarchy in a webview panel
-   */
-  public static async showInWebview(
-    hierarchy: InstructionHierarchy, 
-    extensionUri: vscode.Uri
-  ): Promise<vscode.WebviewPanel> {
-    const panel = vscode.window.createWebviewPanel(
-      'copilotInstructionHierarchy',
-      'Copilot Instruction Hierarchy',
-      vscode.ViewColumn.Two,
-      {
-        enableScripts: true,
-        localResourceRoots: [extensionUri]
-      }
-    );
-
-    panel.webview.html = this.generateHtmlVisualization(hierarchy);
-    
-    return panel;
-  }
-
-  /**
-   * Show hierarchy in a text document
-   */
-  public static async showInDocument(hierarchy: InstructionHierarchy): Promise<vscode.TextDocument> {
-    const text = this.generateTextTree(hierarchy);
-    const doc = await vscode.workspace.openTextDocument({
-      language: 'markdown',
-      content: text
-    });
-    
-    await vscode.window.showTextDocument(doc, {
-      viewColumn: vscode.ViewColumn.Two,
-      preview: true
-    });
-    
-    return doc;
-  }
+    private escapeHtml(text: string): string {
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
 }
